@@ -1,0 +1,11 @@
+{
+    "id": "mcp",
+    "name": "MCP Agent",
+    "welcomeMessage": "Hi, I am an assistant with MCP integration! I can help you with any question you may have and access MCP server tools.",
+    "prompts": [
+        { "name" : "clock", "text" : "what is the current time?" },
+        { "name" : "mcp", "text" : "what MCP tools are available?" }
+    ],
+    "contactEmail": "support@simpleagent.example"
+}
+  

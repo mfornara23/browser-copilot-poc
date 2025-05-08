@@ -1,0 +1,22 @@
+[tool.poetry]
+name = "agent-poc"
+version = "0.1.0"
+description = "MCP Agent for Browser Copilot"
+authors = ["Your Name <your.email@example.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+fastapi = "~=0.103"
+uvicorn = "~=0.23"
+langchain = "~=0.0"
+langchain-community = "~=0.0"
+openai = "~=1.7"
+python-dotenv = "~=1.0"
+tiktoken = "^0.6.0"
+mcp = "^1.2.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
