@@ -60,77 +60,104 @@ class MCPClient:
         self.tools = []
         self.resources = []
         self.prompts = []
+        self.session = None
+        self.streams = None
     
     async def initialize(self):
         try:
             print(f"Attempting to connect to MCP server at {self.server_url}")
-            async with sse_client(self.server_url) as streams:
-                async with ClientSession(*streams) as session:
-                    await session.initialize()
-                    self.tools = await session.list_tools()
-                    print("Connected to MCP server at", self.server_url)
+            # Keep the sse_client and session open
+            self.streams = sse_client(self.server_url)
+            self.session = ClientSession(*(await self.streams.__aenter__())) # Manually enter the sse_client context
+            await self.session.initialize()
+            # self.tools = await self.session.list_tools() # This line should be removed
+            print("Connected to MCP server at", self.server_url)
 
         except Exception as e:
             print(f"Error connecting to MCP server at {self.server_url}")
             print(f"Error details: {str(e)}")
+            if self.session:
+                await self.session.__aexit__(None, None, None) # Ensure session is closed on error
+                self.session = None
+            if self.streams:
+                await self.streams.__aexit__(None, None, None) # Ensure streams are closed on error
+                self.streams = None
             import traceback
             traceback.print_exc()
     
     async def get_tools(self) -> List[ToolDef]:
-        """List available tools from the MCP endpoint
+        if not self.session:
+            # This case should ideally be handled by explicit initialization by the caller
+            print("MCPClient session not initialized. Initializing now...")
+            await self.initialize() 
+            if not self.session: # If initialization failed
+                print("Failed to initialize session in get_tools.")
+                return []
+
+        tools_result = await self.session.list_tools()
         
-        Returns:
-            List of ToolDef objects describing available tools
-        """
-        tools = []
-        async with sse_client(self.server_url) as streams:
-            async with ClientSession(*streams) as session:
-                await session.initialize()
-                tools_result = await session.list_tools()
-                
-                for tool in tools_result.tools:
-                    parameters = []
-                    required_params = tool.inputSchema.get("required", [])
-                    for param_name, param_schema in tool.inputSchema.get("properties", {}).items():
-                        parameters.append(
-                            ToolParameter(
-                                name=param_name,
-                                parameter_type=param_schema.get("type", "string"),
-                                description=param_schema.get("description", ""),
-                                required=param_name in required_params,
-                                default=param_schema.get("default"),
-                            )
-                        )
-                    tools.append(
-                        ToolDef(
-                            name=tool.name,
-                            description=tool.description,
-                            parameters=parameters,
-                            metadata={"endpoint": self.server_url},
-                            identifier=tool.name  # Using name as identifier
-                        )
+        processed_tools = []
+        for tool_def_proto in tools_result.tools: # Assuming tools_result.tools is the list of tool definitions
+            parameters = []
+            required_params = tool_def_proto.inputSchema.get("required", [])
+            for param_name, param_schema in tool_def_proto.inputSchema.get("properties", {}).items():
+                parameters.append(
+                    ToolParameter(
+                        name=param_name,
+                        parameter_type=param_schema.get("type", "string"),
+                        description=param_schema.get("description", ""),
+                        required=param_name in required_params,
+                        default=param_schema.get("default"),
                     )
-        return tools
+                )
+            processed_tools.append(
+                ToolDef(
+                    name=tool_def_proto.name,
+                    description=tool_def_proto.description,
+                    parameters=parameters,
+                    metadata={"endpoint": self.server_url}, # Assuming self.server_url is still relevant
+                    identifier=tool_def_proto.name 
+                )
+            )
+        self.tools = processed_tools # Store in self.tools
+        return processed_tools
 
     async def invoke_tool(self, tool_name: str, kwargs: Dict[str, Any]) -> ToolInvocationResult:
-        """Invoke a specific tool with parameters
-        
-        Args:
-            tool_name: Name of the tool to invoke
-            kwargs: Dictionary of parameters to pass to the tool
-            
-        Returns:
-            ToolInvocationResult containing the tool's response
-        """
-        async with sse_client(self.server_url) as streams:
-            async with ClientSession(*streams) as session:
-                await session.initialize()
-                result = await session.call_tool(tool_name, kwargs)
+        if not self.session:
+            # This case should ideally be handled by explicit initialization by the caller
+            print("MCPClient session not initialized. Initializing now...")
+            await self.initialize()
+            if not self.session: # If initialization failed
+                print("Failed to initialize session in invoke_tool.")
+                # Return an error ToolInvocationResult
+                return ToolInvocationResult(content="Failed to initialize MCP session", error_code=1)
+
+        result = await self.session.call_tool(tool_name, kwargs)
 
         return ToolInvocationResult(
-            content="\n".join([result.model_dump_json() for result in result.content]),
+            content="\n".join([res.model_dump_json() for res in result.content]), # Assuming result.content is a list of models
             error_code=1 if result.isError else 0,
         )
+
+    async def close(self):
+        print("Closing MCPClient session...")
+        if self.session:
+            try:
+                await self.session.__aexit__(None, None, None) # Assuming ClientSession is an async context manager
+                print("MCP session closed.")
+            except Exception as e:
+                print(f"Error closing MCP session: {str(e)}")
+            finally:
+                self.session = None
+        
+        if self.streams:
+            try:
+                await self.streams.__aexit__(None, None, None) # Assuming sse_client returns an async context manager
+                print("MCP streams closed.")
+            except Exception as e:
+                print(f"Error closing MCP streams: {str(e)}")
+            finally:
+                self.streams = None
     
     @staticmethod
     def print_tools(tools: List[ToolDef]):
